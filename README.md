@@ -65,3 +65,8 @@ run it
 
 NOTES:
 If youre using using the torch parts only, you can `export XLA_PYTHON_CLIENT_PREALLOCATE=false` to prevent jax from doing jax things and hogging your VRAM
+
+
+Notes for fork:
+git fetch upstream
+git merge upstream/main
