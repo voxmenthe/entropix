@@ -41,7 +41,9 @@ def compare_outputs(torch_output: torch.Tensor, jax_output: jax.Array, atol: flo
 def load_weights(ckpt_dir: Path = Path('weights/1B-Instruct'), n_layers: int = 16):
   w = {}
   layer_weights = []
-  device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+  #device = torch.device("cuda" if torch.cuda.is_available() else "mps")
+  device = torch.device("mps")
   with torch.inference_mode():
     for file in ckpt_dir.glob("*.npy"):
       name = '.'.join(str(file).split('/')[-1].split('.')[:-1])

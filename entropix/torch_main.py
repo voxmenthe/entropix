@@ -15,6 +15,8 @@ from entropix.torch_kvcache import KVCache
 from entropix.torch_model import xfmr
 from entropix.torch_weights import XfmrWeights, LayerWeights, load_weights
 
+device = torch.device("mps")
+
 
 prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 <antThinking>
@@ -131,6 +133,7 @@ Let me tell you a story about the adventures of the elven mage frieren and her b
 
 
 def apply_scaling(freqs: torch.Tensor):
+    # The function will use the device of the input tensor
     # Values obtained from grid search
     scale_factor = 8
     low_freq_factor = 1
@@ -239,9 +242,13 @@ def main():
   with torch.inference_mode():
     model_params = LLAMA_1B_PARAMS
     xfmr_weights = load_weights()
-    cxfmr = torch.compile(xfmr)
-    #xfmr_weights = load_weights(ckpt_dir=Path('weights/1B-Base'))
+    # Replace this line:
+    # cxfmr = torch.compile(xfmr)
 
+    # With this:
+    cxfmr = torch.compile(xfmr, backend="eager")
+
+    # Then update all calls from cxfmr to xfmr in the generate function
     tokenizer = Tokenizer('entropix/tokenizer.model')
     raw_tokens1 = tokenizer.encode(prompt,  bos=False, eos=False, allowed_special='all')
     raw_tokens2 = tokenizer.encode(prompt2, bos=False, eos=False, allowed_special='all')
@@ -257,25 +264,25 @@ def main():
     def generate(xfmr_weights, model_params, tokens):
       gen_tokens = None
       cur_pos = 0
-      tokens = torch.tensor([tokens], dtype=torch.long)
+      tokens = torch.tensor([tokens], dtype=torch.long).to(device)
       bsz, seqlen = tokens.shape
-      attn_mask = build_attn_mask(seqlen, cur_pos)
-      freqs_cis = precompute_freqs_cis(model_params.head_dim, model_params.max_seq_len, model_params.rope_theta, model_params.use_scaled_rope)
-      kvcache = KVCache.new(model_params.n_layers, bsz, model_params.max_seq_len, model_params.n_local_kv_heads, model_params.head_dim)
+      attn_mask = build_attn_mask(seqlen, cur_pos).to(device)
+      freqs_cis = precompute_freqs_cis(model_params.head_dim, model_params.max_seq_len, model_params.rope_theta, model_params.use_scaled_rope).to(device)
+      kvcache = KVCache.new(model_params.n_layers, bsz, model_params.max_seq_len, model_params.n_local_kv_heads, model_params.head_dim).to(device)
       logits, kvcache = cxfmr(xfmr_weights, model_params, tokens, cur_pos, freqs_cis[:seqlen], kvcache, attn_mask=attn_mask)
       next_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True).to(torch.long)
       gen_tokens = next_token
       print(tokenizer.decode([next_token.item()]), end='', flush=True)
       cur_pos = seqlen
-      stop = torch.tensor([128001, 128008, 128009])
-      #stop = torch.tensor(tokenizer.stop_tokens)
+      #stop = torch.tensor([128001, 128008, 128009])
+      stop = torch.tensor(tokenizer.stop_tokens)
       while cur_pos < 2048:
         cur_pos += 1
         logits, kvcache = cxfmr(xfmr_weights, model_params, next_token, cur_pos, freqs_cis[cur_pos:cur_pos+1], kvcache)
         next_token = sample(gen_tokens, logits)
         gen_tokens = torch.cat((gen_tokens, next_token), dim=1)
         print(tokenizer.decode(next_token.tolist()[0]), end='', flush=True)
-        if torch.isin(next_token, stop).any():
+        if torch.isin(next_token.to('cpu'), stop).any(): # need to move to cpu??
           break
 
     print(prompt)

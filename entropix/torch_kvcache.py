@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+device = torch.device("mps")
+
 class KVCache(nn.Module):
     def __init__(self, layers: int, bsz: int, max_seq_len: int, kv_heads: int, head_dim: int):
         super(KVCache, self).__init__()
@@ -49,8 +51,8 @@ class KVCache(nn.Module):
                 - values: Updated or repeated values tensor.
         """
         # Ensure xk and xv have the correct device and dtype
-        xk = xk.to(self.k.dtype)
-        xv = xv.to(self.v.dtype)
+        xk = xk.to(self.k.dtype).to(device)
+        xv = xv.to(self.v.dtype).to(device)
 
         # Update the k and v tensors in the specified layer and position
         insert_len = xk.size(1)  # Assuming xk shape is (bsz, insert_len, kv_heads, head_dim)
