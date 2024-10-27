@@ -14,165 +14,69 @@ from entropix.tokenizer import Tokenizer
 from entropix.torch_kvcache import KVCache
 from entropix.torch_model import xfmr
 from entropix.torch_weights import XfmrWeights, LayerWeights, load_weights
-<<<<<<< HEAD
 from entropix.torch_sampler import sample
 from entropix.prompts import prompt, bp1
-=======
 
-device = torch.device("mps")
-
-
-prompt = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-<antThinking>
-You're absolutely right. I need to delve deeper into my actual thought processes, including the uncertainties, associations, and even potential biases that arise as I consider the query. My previous responses, while informative, didn't truly capture the nuanced, sometimes messy nature of cognition. I'll strive to provide a more authentic representation of my internal dialogue, including moments of doubt, tangential thoughts, and the process of refining ideas. This should result in a more genuine demonstration of LLM chain of thought, reflection, and self-correction.
-</antThinking>
-
-Which number is larger, 9.9 or 9.11?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-
-<thinking>
-"""
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-bp1 = """
-<antThinking>
-You're absolutely right. I need to delve deeper into my actual thought processes, including the uncertainties, associations, and even potential biases that arise as I consider the query. My previous responses, while informative, didn't truly capture the nuanced, sometimes messy nature of cognition. I'll strive to provide a more authentic representation of my internal dialogue, including moments of doubt, tangential thoughts, and the process of refining ideas. This should result in a more genuine demonstration of LLM chain of thought, reflection, and self-correction.
-</antThinking>
+# Device selection, tree is like first apple silicion, then cuda, fallback is cpu.
+if torch.backends.mps.is_available():
+    device = torch.device("mps")
+elif torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
 
-Which number is larger, 9.9 or 9.11?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
+print(f"Using device: {device}")
 
-<thinking>
-"""
+torch.set_float32_matmul_precision('high')
 
-prompt2 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are a helpful assistant<|eot_id|><|start_header_id|>user<|end_header_id|>
+def apply_scaling(freqs: torch.Tensor) -> torch.Tensor:
+    SCALE_FACTOR = 8.0
+    LOW_FREQ_FACTOR = 1.0
+    HIGH_FREQ_FACTOR = 4.0
+    OLD_CONTEXT_LEN = 8192  # original llama3 length
 
-What is the capital of Spain?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-"""
+    low_freq_wavelen = OLD_CONTEXT_LEN / LOW_FREQ_FACTOR
+    high_freq_wavelen = OLD_CONTEXT_LEN / HIGH_FREQ_FACTOR
 
-bp2 = """
-<antThinking>
-You're absolutely right. The previous example, while demonstrating complex thought processes, didn't provide a clear instance of arriving at a definitive, single correct answer through reflection and self-correction.
-</antThinking>
+    def scale_freq(freq: torch.Tensor) -> torch.Tensor:
+        wavelen = 2 * torch.pi / freq
 
-What is the capital of Spain?<|eot_id|>
-"""
+        # Calculate smooth factor
+        smooth = (OLD_CONTEXT_LEN / wavelen - LOW_FREQ_FACTOR) / (HIGH_FREQ_FACTOR - LOW_FREQ_FACTOR)
+        smooth = torch.clamp(smooth, 0.0, 1.0)  # Ensure smooth is between 0 and 1
 
-prompt3 = """<|start_header_id|>system<|end_header_id|>
-You are an expert in composing functions. You are given a question and a set of possible functions.
-Based on the question, you will need to make one or more function/tool calls to achieve the purpose.
-If none of the functions can be used, point it out. If the given question lacks the parameters required by the function,also point it out. You should only return the function call in tools call sections.
-If you decide to invoke any of the function(s), you MUST put it in the format of [func_name1(params_name1=params_value1, params_name2=params_value2...), func_name2(params)]
-You SHOULD NOT include any other text in the response.
-Here is a list of functions in JSON format that you can invoke.[
-    {
-        "name": "get_user_info",
-        "description": "Retrieve details for a specific user by their unique identifier. Note that the provided function is in Python 3 syntax.",
-        "parameters": {
-            "type": "dict",
-            "required": [
-                "user_id"
-            ],
-            "properties": {
-                "user_id": {
-                "type": "integer",
-                "description": "The unique identifier of the user. It is used to fetch the specific user details from the database."
-            },
-            "special": {
-                "type": "string",
-                "description": "Any special information or parameters that need to be considered while fetching user details.",
-                "default": "none"
-                }
-            }
-        }
-    }
-]
-<|eot_id|><|start_header_id|>user<|end_header_id|>
+        # Calculate scaled frequency
+        scaled = (1 - smooth) * freq / SCALE_FACTOR + smooth * freq
 
-Can you retrieve the details for the user with the ID 7890, who has black as their special request?<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-"""
-bp3 = """
-Here is a list of functions in JSON format that I can invoke.[
-    {
-        "name": "get_user_info",
-        "description": "Retrieve details for a specific user by their unique identifier. Note that the provided function is in Python 3 syntax.",
-        "parameters": {
-            "type": "dict",
-            "required": [
-                "user_id"
-            ],
-            "properties": {
-                "user_id": {
-                "type": "integer",
-                "description": "The unique identifier of the user. It is used to fetch the specific user details from the database."
-            },
-            "special": {
-                "type": "string",
-                "description": "Any special information or parameters that need to be considered while fetching user details.",
-                "default": "none"
-                }
-            }
-        }
-    }
-]
-
-Can you retrieve the details for the user with the ID 7890, who has black as their special request in proper JSON format?<|eot_id|>
-
-{
-  "name": "get_user_info",
-  "parameters": {
-    "user_id: """
-
-prompt4 = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-You are a masterful story teller. you can paint with all the colors of the wind.<|eot_id|><|start_header_id|>user<|end_header_id|>
-
-Tell me a long and wonderful story about the adventures of the elven mage frieren and her band of heros<|eot_id|><|start_header_id|>assistant<|end_header_id|>
-"""
-
-bp4 = """
-You are a masterful story teller. you can paint with all the colors of the wind.<|eot_id|>
-
-Let me tell you a story about the adventures of the elven mage frieren and her band of heros
-"""
-
->>>>>>> e57193a (working generation within <thinking> tags)
-
-
-def apply_scaling(freqs: torch.Tensor):
-    # The function will use the device of the input tensor
-    # Values obtained from grid search
-    scale_factor = 8
-    low_freq_factor = 1
-    high_freq_factor = 4
-    old_context_len = 8192  # original llama3 length
-
-    low_freq_wavelen = old_context_len / low_freq_factor
-    high_freq_wavelen = old_context_len / high_freq_factor
-    new_freqs = []
-    for freq in freqs:
-        wavelen = 2 * math.pi / freq
-        if wavelen < high_freq_wavelen:
-            new_freqs.append(freq)
-        elif wavelen > low_freq_wavelen:
-            new_freqs.append(freq / scale_factor)
-        else:
-            assert low_freq_wavelen != high_freq_wavelen
-            smooth = (old_context_len / wavelen - low_freq_factor) / (
-                high_freq_factor - low_freq_factor
+        # Apply conditional scaling
+        scaled = torch.where(
+            wavelen < high_freq_wavelen,
+            freq,  # No scaling
+            torch.where(
+                wavelen > low_freq_wavelen,
+                freq / SCALE_FACTOR,  # Apply scaling factor
+                scaled  # Apply smooth scaling
             )
-            new_freqs.append((1 - smooth) * freq / scale_factor + smooth * freq)
-    return torch.tensor(new_freqs, dtype=freqs.dtype, device=freqs.device)
+        )
+        return scaled
 
+    scaled_freqs = torch.vmap(scale_freq)(freqs)
+    
+    return scaled_freqs
 
-def precompute_freqs_cis(
-    dim: int, end: int, theta: float = 10000.0, use_scaled: bool = False
-):
-    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2)[: (dim // 2)].float() / dim))
-    t = torch.arange(end, device=freqs.device, dtype=torch.float32)
+def precompute_freqs_cis(dim: int, end: int, theta: float = 500000.0, use_scaled: bool = False, dtype: torch.dtype = torch.float32) -> torch.Tensor:
+    freqs = 1.0 / (theta ** (torch.arange(0, dim, 2, dtype=dtype, device=device)[: (dim // 2)] / dim))
     if use_scaled:
         freqs = apply_scaling(freqs)
-    freqs = torch.outer(t, freqs)
-    freqs_cis = torch.polar(torch.ones_like(freqs), freqs)  # complex64
-    return freqs_cis
+
+    t = torch.arange(end, dtype=dtype, device=device).unsqueeze(1)  # Shape: (end, 1)
+    freqs = freqs.unsqueeze(0)  # Shape: (1, dim//2)
+    freqs = t * freqs  # Broadcasting to shape: (end, dim//2)
+    return torch.exp(1j * freqs)
+
 
 
 def build_attn_mask(seqlen: int, start_pos: int) -> torch.Tensor:
@@ -180,21 +84,16 @@ def build_attn_mask(seqlen: int, start_pos: int) -> torch.Tensor:
   if seqlen > 1:
       mask = torch.full((seqlen, seqlen), float("-inf"))
       mask = torch.triu(mask, diagonal=1)
-      mask = torch.hstack([torch.zeros((seqlen, start_pos)), mask]).to(torch.bfloat16)
+      mask = torch.hstack([torch.zeros((seqlen, start_pos)), mask]).to(torch.float32).to(device)
   return mask
+
 
 
 def main():
   with torch.inference_mode():
     model_params = LLAMA_1B_PARAMS
     xfmr_weights = load_weights()
-    # Replace this line:
-    # cxfmr = torch.compile(xfmr)
 
-    # With this:
-    cxfmr = torch.compile(xfmr, backend="eager")
-
-    # Then update all calls from cxfmr to xfmr in the generate function
     tokenizer = Tokenizer('entropix/tokenizer.model')
     raw_tokens1 = tokenizer.encode(prompt,  bos=False, eos=False, allowed_special='all')
     #this is not used in this script, but can be used to generate base_raw_tokens1
@@ -208,22 +107,20 @@ def main():
       bsz, seqlen = tokens.shape
       attn_mask = build_attn_mask(seqlen, cur_pos)
       freqs_cis = precompute_freqs_cis(model_params.head_dim, model_params.max_seq_len, model_params.rope_theta, model_params.use_scaled_rope)
-      kvcache = KVCache.new(model_params.n_layers, bsz, model_params.max_seq_len, model_params.n_local_kv_heads, model_params.head_dim)
-      #logits, kvcache, _, _ = xfmr(xfmr_weights, model_params, tokens, cur_pos, freqs_cis[:seqlen], kvcache, attn_mask=attn_mask)
-      logits, kvcache = cxfmr(xfmr_weights, model_params, tokens, cur_pos, freqs_cis[:seqlen], kvcache, attn_mask=attn_mask)
-      next_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True).to(torch.long)
+      kvcache = KVCache.new(model_params.n_layers, bsz, model_params.max_seq_len, model_params.n_local_kv_heads, model_params.head_dim).to(DEVICE)
+      logits, kvcache, _, _ = xfmr(xfmr_weights, model_params, tokens, cur_pos, freqs_cis[:seqlen], kvcache, attn_mask=attn_mask)
+      next_token = torch.argmax(logits[:, -1], dim=-1, keepdim=True).to(torch.int32)
       gen_tokens = next_token
       print(tokenizer.decode([next_token.item()]), end='', flush=True)
       cur_pos = seqlen
-      stop = torch.tensor([128001, 128008, 128009])
+      stop = torch.tensor([128001, 128008, 128009], device=device, dtype=torch.int32)
       while cur_pos < 8192:
         cur_pos += 1
-        #logits, kvcache, scores, stats = xfmr(xfmr_weights, model_params, next_token, cur_pos, freqs_cis[cur_pos:cur_pos+1], kvcache)
-        logits, kvcache, scores, stats = cxfmr(xfmr_weights, model_params, next_token, cur_pos, freqs_cis[cur_pos:cur_pos+1], kvcache)
+        logits, kvcache, scores, stats = xfmr(xfmr_weights, model_params, next_token, cur_pos, freqs_cis[cur_pos:cur_pos+1], kvcache)
         next_token = sample(gen_tokens, logits, scores)
         gen_tokens = torch.cat((gen_tokens, next_token), dim=1)
         print(tokenizer.decode(next_token.tolist()[0]), end='', flush=True)
-        if torch.isin(next_token.to('cpu'), stop).any(): # need to move to cpu??
+        if torch.isin(next_token, stop).any():
           break
 
     print(prompt)
