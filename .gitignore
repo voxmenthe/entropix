@@ -146,4 +146,4 @@ dmypy.json
 *.swp
 
 #tiktoken model file
-entropix/tokenizer.model
+entropix/tokenizer.modelgit_instructions.md
