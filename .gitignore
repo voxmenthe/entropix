@@ -147,3 +147,4 @@ dmypy.json
 
 #tiktoken model file
 entropix/tokenizer.modelgit_instructions.md
+**/git_instructions.md
